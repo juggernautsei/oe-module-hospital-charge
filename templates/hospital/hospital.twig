@@ -1,0 +1,935 @@
+{% extends 'base.twig' %}
+
+{% block title %}{{ title | xlt }}{% endblock %}
+
+{% block head %}
+    {{ setupHeader(['common','jquery-ui', 'jquery-ui-base', 'select2', 'datetime-picker']) }}
+    <script>
+        // Global constants for security
+        const WEBROOT = {{ webroot|json_encode }};
+        const HOSPITAL_DATA = {{ hospital_data|default({})|json_encode }};
+        
+        {{ DateToYYYYMMDD_js() }}
+
+        $(function () {
+            var win = top.printLogSetup ? top : opener.top;
+            win.printLogSetup(document.getElementById('printbutton'));
+
+            {{ jqueryDateTimePicker('.datepicker',false,false,false) }}
+
+            // Pre-populate form fields from hospital_data if available
+            if (HOSPITAL_DATA.provider) {
+                $('input[name="selected_provider_id"]').val(HOSPITAL_DATA.provider);
+            }
+            
+            if (HOSPITAL_DATA.facility) {
+                $('select[name="facility"]').val(HOSPITAL_DATA.facility);
+            }
+            
+            if (HOSPITAL_DATA.billing_facility) {
+                $('select[name="billing_facility"]').val(HOSPITAL_DATA.billing_facility);
+            }
+        });
+    </script>
+
+
+    <style>
+        .container {
+            margin-top: 20px;
+        }
+        .facility-card {
+            margin-bottom: 20px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .card-header {
+            background-color: #f8f9fa;
+            font-weight: bold;
+        }
+        body { padding: 2rem; }
+
+        .diagnosis-label { font-weight: bold; }
+        .diagnosis-description, .procedure-description {
+            font-size: 0.85em;
+            color: #555;
+            margin-top: 5px;
+            font-style: italic;
+        }
+        .alert {
+            margin-top: 15px;
+        }
+        .modifier-field {
+            margin-top: 10px;
+        }
+        .justify-badge {
+            display: inline-block;
+            background-color: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            padding: 2px 5px;
+            margin: 2px;
+            font-size: 0.8em;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+    {% include 'nav.twig' %}
+    <div class="container-fluid">
+        <h2 class="mb-4 mt-4">{{ "Hospital Charges" | xlt }}</h2>
+
+        {% if hospital_data is defined and hospital_data.status is defined %}
+            {% if hospital_data.status == 'success' %}
+                <div class="alert alert-success">
+                    {{ hospital_data.message|e }}
+                    <br>{{ 'Encounter #%s created for date %s'|xlt|format(hospital_data.encounter|e, hospital_data.date|e) }}
+                </div>
+            {% else %}
+                <div class="alert alert-danger">
+                    {{ hospital_data.error|e|xlt }}
+                </div>
+            {% endif %}
+        {% endif %}
+
+        <form id="hcfaChargeForm" method="post" action="{{ webroot }}/interface/modules/custom_modules/oe-module-hospital-charge/public/index.php/processHospitalClaim">
+            <input type="hidden" name="csrf_token_form" value="{{ csrfToken }}">
+            <input type="hidden" name="servicedate" id="servicedate" value="{{ "now"|date("Y-m-d") }}">
+
+            <!-- Patient Section -->
+            {% include 'common/_inputsCommon.twig' %}
+            <!-- Diagnosis Section -->
+            <div class="mb-4 mt-4">
+                <label class="diagnosis-label">{{ 'Diagnosis Codes (Field 21)'|xlt }}</label>
+                <div class="table-responsive">
+                    <table class="table table-bordered" id="diagnosisTable" aria-label="{{ 'Diagnosis Codes Table'|xlt }}">
+                        <thead class="thead-light">
+                        <tr>
+                            <th style="width: 95%">{{ 'ICD-10 Code'|xlt }}</th>
+                            <th style="width: 5%" aria-label="{{ 'Actions'|xlt }}"></th>
+                        </tr>
+                        </thead>
+                        <tbody id="diagnosisList">
+                        <!-- Initial row added by script -->
+                        </tbody>
+                    </table>
+                </div>
+                <button type="button" class="btn btn-sm btn-secondary" id="addDiagnosisBtn" style="visibility: visible; opacity: 1;" aria-label="{{ 'Add new diagnosis code'|xlt }}">{{ 'Add Diagnosis'|xlt }}</button>
+            </div>
+
+            <!-- Charges Table -->
+            <div class="table-responsive">
+                <table class="table table-bordered" id="chargeTable" aria-label="{{ 'Hospital Charges Table'|xlt }}">
+                    <thead class="thead-light">
+                    <tr>
+                        <th style="width: 15%">{{ 'Date of Service'|xlt }} ({{ '24A'|xlt }})</th>
+                        <th style="width: 50%">{{ 'Procedure Code'|xlt }} ({{ '24D'|xlt }})</th>
+                        <th style="width: 15%">{{ 'Modifiers'|xlt }}</th>
+                        <th style="width: 15%">{{ 'Justification'|xlt }}</th>
+                        <th style="width: 5%" aria-label="{{ 'Actions'|xlt }}"></th>
+                    </tr>
+                    </thead>
+                    <tbody id="chargeBody"></tbody>
+                </table>
+            </div>
+
+            <div class="mb-3">
+                <button type="button" class="btn btn-sm btn-secondary" id="addRowBtn" aria-label="{{ 'Add new charge line item'|xlt }}">{{ 'Add Line Item'|xlt }}</button>
+            </div>
+
+                <button type="submit" class="btn btn-primary" aria-label="{{ 'Submit hospital charges for billing'|xlt }}">{{ 'Bill Charges'|xlt }}</button>
+        </form>
+
+        <!-- Modal for selecting previous diagnoses -->
+        <div class="modal fade" id="modal-prev-dx" tabindex="-1" role="dialog" aria-labelledby="modal-prev-dx-title" aria-hidden="true">
+            <div class="modal-dialog modal-lg" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="modal-prev-dx-title">{{ 'Select Previous Diagnoses'|xlt }}</h5>
+                        <button type="button" class="close" data-dismiss="modal" aria-label="{{ 'Close'|xlt }}">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                    </div>
+                    <div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
+                        <p class="text-muted mb-3" id="prev-dx-subtitle">{{ 'Select up to 4 diagnosis codes from the last 6 months'|xlt }}</p>
+                        <div id="prev-dx-empty" class="alert alert-info text-center" style="display:none;">
+                            {{ 'No previous diagnoses found in the last 6 months.'|xlt }}
+                        </div>
+                        <div id="prev-dx-list">
+                            <!-- Checkboxes will be dynamically inserted here -->
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-dismiss="modal">{{ 'Cancel'|xlt }}</button>
+                        <button type="button" id="btn-prev-dx-apply" class="btn btn-primary" disabled>{{ 'Load Selected'|xlt }}</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script>
+        (function ($) {
+            // Removed maxRows limit - users can now add unlimited charge line items
+            const maxDiagnosis = 4;
+            
+            // Cache frequently used DOM elements
+            const $tableBody = $("#chargeBody");
+            const $addRowBtn = $("#addRowBtn");
+            const $diagnosisList = $("#diagnosisList");
+            const $addDiagnosisBtn = $("#addDiagnosisBtn");
+            const $form = $("#hcfaChargeForm");
+            const $container = $('.container-fluid');
+
+            // Store all diagnosis codes for justification
+            let diagnosisCodes = [];
+
+            // Generic autocomplete helper function
+            function setupAutocomplete(config) {
+                const {
+                    selector,
+                    searchType,
+                    minLength = 3,
+                    onSelect,
+                    formatLabel,
+                    formatData
+                } = config;
+
+                $(selector).autocomplete({
+                    source: function (request, response) {
+                        const url = `${WEBROOT}/interface/modules/custom_modules/oe-module-hospital-charge/public/index.php/search${searchType}/${encodeURIComponent(request.term)}`;
+                        
+                        fetch(url, {
+                            method: 'GET',
+                            headers: { 'Accept': 'application/json' }
+                        })
+                        .then(res => res.json())
+                        .then(data => {
+                            const formattedData = formatData ? formatData(data) : data.map(item => ({
+                                label: formatLabel ? formatLabel(item) : `${item.code || item.name} - ${item.description || ''}`,
+                                value: item.code || item.name || item.value,
+                                ...item
+                            }));
+                            response(formattedData);
+                        })
+                        .catch(error => {
+                            console.error(`Error fetching ${searchType} data:`, error);
+                            displayError(`{{ 'Error: Unable to retrieve data. Please try again later.'|xlt }}`, error);
+                        });
+                    },
+                    minLength: minLength,
+                    select: onSelect
+                });
+            }
+
+            // Centralized error display function
+            function displayError(message, error) {
+                console.error('AJAX Error:', error);
+                // Create a user-friendly alert with Bootstrap styling
+                const alertHtml = `
+                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        <strong>{{ 'Error'|xlt }}:</strong> ${message}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="{{ 'Close'|xlt }}"></button>
+                    </div>`;
+                
+                // Use cached container or fallback
+                let container = $container.length ? $container : $('body');
+                
+                // Add alert at the top
+                container.prepend(alertHtml);
+                
+                // Auto-dismiss after 10 seconds
+                setTimeout(() => {
+                    $('.alert-danger').fadeOut('slow');
+                }, 10000);
+            }
+
+            function updateAddBtnState() {
+                // No limit on rows - button remains enabled
+                $addRowBtn.prop("disabled", false);
+            }
+
+            function updateDiagnosisBtnState() {
+                $addDiagnosisBtn.prop("disabled", $diagnosisList.children("tr").length >= maxDiagnosis);
+            }
+
+            // Function to initialize ICD-10 autocomplete on a field
+            function initDiagnosisAutocomplete(inputField) {
+                $(inputField).autocomplete({
+                    source: function (request, response) {
+                        let url = WEBROOT + '/interface/modules/custom_modules/oe-module-hospital-charge/public/index.php/searchCpt4/ICD10/' + encodeURIComponent(request.term);
+                        fetch(url, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'application/json'
+                            }
+                        })
+                        .then(res => res.json())
+                        .then(data => {
+                            let formattedData = data.map(icd10 => ({
+                                label: `${icd10.code} - ${icd10.description}`,
+                                value: icd10.code,
+                                id: icd10.id || icd10.code,
+                                description: icd10.description
+                            }));
+                            response(formattedData);
+                        })
+                        .catch(error => {
+                            console.error('Error fetching ICD10 data:', error);
+                            displayError('{{ "Error: Unable to retrieve ICD10 data. Please try again later."|xlt }}', error);
+                        });
+                    },
+                    minLength: 3,
+                    select: function (event, ui) {
+                        // Get the previously selected code for this field
+                        const previousCode = $(this).attr('data-previous-icd10');
+                        
+                        // Remove the previous code from justification if it exists
+                        if (previousCode && previousCode !== ui.item.value) {
+                            removeICD10(previousCode);
+                        }
+                        
+                        // Ensure code is treated as string to preserve decimals
+                        $(this).val(String(ui.item.value));
+
+                        // Get the parent row
+                        const $row = $(this).closest('tr');
+
+                        // Remove any existing description
+                        $row.find('.diagnosis-description').remove();
+
+                        // Add the description below the code input
+                        const $cell = $(this).parent();
+                        $cell.append(`<div class="diagnosis-description">${ui.item.description}</div>`);
+
+                        // Store the description and current code in data attributes
+                        $(this).attr('data-description', ui.item.description);
+                        $(this).attr('data-previous-icd10', ui.item.value);
+
+                        // Rebuild the diagnosis codes array from all current values
+                        rebuildDiagnosisCodes();
+
+                        return false;
+                    }
+                });
+                
+                // Add event handlers for manual input changes
+                $(inputField).on('blur change', function() {
+                    // Ensure value is treated as string to preserve decimals
+                    const currentValue = String($(this).val() || '').trim();
+                    const previousCode = $(this).attr('data-previous-icd10');
+                    
+                    // If the value changed, update our tracking
+                    if (currentValue !== previousCode) {
+                        $(this).attr('data-previous-icd10', currentValue);
+                        // Clear description when manually typed (no autocomplete)
+                        if (!$(this).data('ui-autocomplete') || !$(this).data('ui-autocomplete').selectedItem) {
+                            $(this).closest('tr').find('.diagnosis-description').remove();
+                            $(this).removeAttr('data-description');
+                        }
+                        rebuildDiagnosisCodes();
+                    }
+                });
+            }
+
+            // Function to initialize CPT4 autocomplete on a field
+            function initProcedureAutocomplete(inputField) {
+                $(inputField).autocomplete({
+                    source: function (request, response) {
+                        let url = WEBROOT + '/interface/modules/custom_modules/oe-module-hospital-charge/public/index.php/searchCpt4/CPT4/' + encodeURIComponent(request.term);
+                        fetch(url, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'application/json'
+                            }
+                        })
+                        .then(res => res.json())
+                        .then(data => {
+                            let formattedData = data.map(cpt => ({
+                                label: `${cpt.code} - ${cpt.description}`,
+                                value: cpt.code,
+                                id: cpt.id || cpt.code,
+                                description: cpt.description,
+                                price: cpt.price || "0.00"
+                            }));
+                            response(formattedData);
+                        })
+                        .catch(error => {
+                            console.error('Error fetching CPT4 data:', error);
+                            displayError('{{ "Error: Unable to retrieve CPT4 data. Please try again later."|xlt }}', error);
+                        });
+                    },
+                    minLength: 3,
+                    select: function (event, ui) {
+                        $(this).val(ui.item.value);
+
+                        // Get the parent row
+                        const $row = $(this).closest('tr');
+
+                        // Remove any existing description
+                        $row.find('.procedure-description').remove();
+
+                        // Add the description below the code input
+                        const $cell = $(this).parent();
+                        $cell.append(`<div class="procedure-description">${ui.item.description}</div>`);
+
+                        // Store the description and price in data attributes for form submission
+                        $(this).attr('data-description', ui.item.description);
+                        $(this).attr('data-price', ui.item.price);
+
+                        // Update the hidden form fields with the selected data
+                        $row.find('.procedure-description-input').val(ui.item.description);
+                        $row.find('.procedure-price-input').val(ui.item.price || 0);
+
+                        // Apply all current diagnoses to this procedure
+                        updateJustificationForRow($row);
+
+                        return false;
+                    }
+                });
+            }
+
+            // Function to add an ICD10 code to the justification system (deprecated - use rebuildDiagnosisCodes)
+            function addICD10(icdCode) {
+                console.warn('addICD10 is deprecated, use rebuildDiagnosisCodes instead');
+                rebuildDiagnosisCodes();
+            }
+
+            // Function to rebuild diagnosis codes array from current form values
+            function rebuildDiagnosisCodes() {
+                diagnosisCodes = [];
+                
+                // Get all diagnosis input fields that have values
+                $('.diagnosis-code').each(function() {
+                    // Ensure we treat the code as a string to preserve decimals
+                    const code = String($(this).val() || '').trim();
+                    if (code && !diagnosisCodes.includes(code)) {
+                        diagnosisCodes.push(code);
+                    }
+                });
+                
+                // Update justification for all procedure rows
+                $tableBody.find('tr').each(function() {
+                    updateJustificationForRow($(this));
+                });
+            }
+
+            // Function to remove an ICD10 code from the justification system
+            function removeICD10(icdCode) {
+                // Remove from our array
+                diagnosisCodes = diagnosisCodes.filter(code => code !== icdCode);
+
+                // Update justification for all procedure rows
+                $tableBody.find('tr').each(function() {
+                    updateJustificationForRow($(this));
+                });
+            }
+
+            // Function to update the justification display and hidden field for a row
+            function updateJustificationForRow($row) {
+                // Get the justify display area and hidden field
+                const $justifyDisplay = $row.find('.justify-display');
+                const $justifyField = $row.find('input[name="procedure_justify[]"]');
+
+                if ($justifyDisplay.length && $justifyField.length) {
+                    // Clear current display
+                    $justifyDisplay.empty();
+
+                    // Format diagnoses as "ICD10|code" and join with colons (matching fee_sheet_core.js format)
+                    // Ensure code is treated as string to preserve decimals like F25.9
+                    // Add trailing colon - required for claims parser to properly delimit the justify string
+                    const justifyValue = diagnosisCodes.map(code => `ICD10|${String(code)}`).join(':') + (diagnosisCodes.length > 0 ? ':' : '');
+                    $justifyField.val(justifyValue);
+
+                    // Create visual badges for each diagnosis
+                    diagnosisCodes.forEach(code => {
+                        $justifyDisplay.append(`<span class="justify-badge">ICD10|${String(code)}</span>`);
+                    });
+                }
+            }
+
+            function addRow() {
+                // No row limit - users can add unlimited rows
+                const rowHtml = `
+          <tr>
+            <td><input type="text" name="dos[]" class="form-control datepicker" required /></td>
+            <td>
+              <input type="text" name="procedure_list[]" class="form-control procedure-code" placeholder="{{ 'e.g. 99233'|xlt }}" required />
+              <input type="hidden" name="procedure_text[]" class="procedure-description-input" />
+              <input type="hidden" name="procedure_fee[]" class="procedure-price-input" />
+              <input type="hidden" name="procedure_units[]" value="1" />
+              <input type="hidden" name="procedure_justify[]" value="" />
+            </td>
+            <td>
+              <input type="text" name="procedure_modifier[]" class="form-control" placeholder="{{ 'e.g. 25, 59'|xlt }}" maxlength="10" />
+            </td>
+            <td>
+              <div class="justify-display"></div>
+            </td>
+            <td>
+              <button type="button" class="btn btn-sm btn-danger remove-row" title="{{ 'Remove Row'|xlt }}" aria-label="{{ 'Remove this charge row'|xlt }}">{{ 'Delete'|xlt }}</button>
+            </td>
+          </tr>`;
+                $tableBody.append(rowHtml);
+
+                // Initialize autocomplete on the newly added procedure field
+                const newField = $tableBody.find('.procedure-code').last();
+                initProcedureAutocomplete(newField);
+
+                // Update the service date field with the selected date
+                const dosField = $tableBody.find('input[name="dos[]"]').last();
+                dosField.on('change', function() {
+                    $('#servicedate').val($(this).val());
+                });
+
+                // Apply existing diagnoses to this new row
+                const $newRow = $tableBody.find('tr').last();
+                updateJustificationForRow($newRow);
+
+                updateAddBtnState();
+                // Initialize datepicker for the newly added row
+                {{ jqueryDateTimePicker('.datepicker',false,false,false) }}
+            }
+
+            function addDiagnosisField() {
+                if ($diagnosisList.children("tr").length >= maxDiagnosis) return;
+                const rowHtml = `
+          <tr>
+            <td>
+              <input type="text" class="form-control diagnosis-code" name="diagnosis_list[]" placeholder="{{ 'e.g. E11.9'|xlt }}" maxlength="20" data-previous-icd10="" />
+              <input type="hidden" name="diagnosis_text[]" class="diagnosis-description-input" />
+            </td>
+            <td class="text-center align-middle">
+              <button type="button" class="btn btn-sm btn-danger remove-diagnosis" title="{{ 'Remove Diagnosis'|xlt }}" aria-label="{{ 'Remove this diagnosis code'|xlt }}">{{ 'Delete'|xlt }}</button>
+            </td>
+          </tr>`;
+                $diagnosisList.append(rowHtml);
+
+                // Initialize autocomplete and event handlers on the newly added diagnosis field
+                const newField = $diagnosisList.find('.diagnosis-code').last();
+                initDiagnosisAutocomplete(newField);
+
+                updateDiagnosisBtnState();
+            }
+
+            // Initial row
+            addRow();
+            addDiagnosisField();
+
+            // Add row handler
+            $addRowBtn.on("click", addRow);
+
+            // Remove row handler
+            $tableBody.on("click", ".remove-row", function () {
+                $(this).closest("tr").remove();
+                updateAddBtnState();
+            });
+
+            // Add diagnosis field handler
+            $addDiagnosisBtn.on("click", addDiagnosisField);
+
+            // Remove diagnosis handler
+            $diagnosisList.on("click", ".remove-diagnosis", function () {
+                const $row = $(this).closest("tr");
+                const $input = $row.find('.diagnosis-code');
+                const diagnosisCode = $input.val();
+
+                // Clear the previous code tracking for this field
+                $input.removeAttr('data-previous-icd10');
+
+                $row.remove();
+                
+                // Rebuild the entire diagnosis codes array from remaining fields
+                rebuildDiagnosisCodes();
+                
+                updateDiagnosisBtnState();
+            });
+
+            // Form submit validation
+            $("#hcfaChargeForm").on("submit", function (e) {
+                if ($tableBody.children("tr").length === 0) {
+                    e.preventDefault();
+                    alert("{{ 'Please add at least one line item.'|xlt }}");
+                    return false;
+                }
+
+                // Check if patient is selected
+                if ($('input[name="selected_patient_id"]').val() === '') {
+                    e.preventDefault();
+                    alert("{{ 'Please select a patient.'|xlt }}");
+                    return false;
+                }
+
+                // Check if provider is selected
+                if ($('input[name="selected_provider_id"]').val() === '') {
+                    e.preventDefault();
+                    alert("{{ 'Please select a provider.'|xlt }}");
+                    return false;
+                }
+
+                // Check if facility is selected
+                if ($('select[name="facility"]').val() === '') {
+                    e.preventDefault();
+                    alert("{{ 'Please select a facility.'|xlt }}");
+                    return false;
+                }
+
+                // Check if billing facility is selected
+                if ($('select[name="billing_facility"]').val() === '') {
+                    e.preventDefault();
+                    alert("{{ 'Please select a billing facility.'|xlt }}");
+                    return false;
+                }
+
+                // Rebuild diagnosis codes before validation to ensure accuracy
+                rebuildDiagnosisCodes();
+                
+                // Check if at least one diagnosis is entered
+                if (diagnosisCodes.length === 0) {
+                    e.preventDefault();
+                    alert("{{ 'Please enter at least one diagnosis code.'|xlt }}");
+                    return false;
+                }
+
+                // Copy descriptions to hidden fields before submission
+                $('.diagnosis-code').each(function() {
+                    const description = $(this).attr('data-description') || '';
+                    $(this).siblings('.diagnosis-description-input').val(description);
+                });
+
+                // Copy procedure descriptions and prices to hidden fields before submission
+                $('.procedure-code').each(function() {
+                    const description = $(this).attr('data-description') || '';
+                    const price = $(this).attr('data-price') || '';
+                    
+                    // Only update if we have values from autocomplete
+                    const $descInput = $(this).siblings('.procedure-description-input');
+                    const $priceInput = $(this).siblings('.procedure-price-input');
+                    
+                    if (description) {
+                        $descInput.val(description);
+                    }
+                    if (price) {
+                        $priceInput.val(price);
+                    }
+                    // If no price from autocomplete, leave it empty (backend will look it up)
+                });
+
+                // Ensure justification is updated for all rows
+                $tableBody.find('tr').each(function() {
+                    updateJustificationForRow($(this));
+                });
+            });
+
+            // Patient search autocomplete
+            $('input[name="searchpatient"]').autocomplete({
+                source: function (request, response) {
+                    let url = WEBROOT + '/interface/modules/custom_modules/oe-module-hospital-charge/public/index.php/searchPatient/' + encodeURIComponent(request.term);
+                    fetch(url, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json'
+                        }
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        let formattedData = data.map(patient => ({
+                            label: `${patient.name} (DOB: ${patient.dob})`,
+                            value: patient.name,
+                            id: patient.id
+                        }));
+
+                        response(formattedData);
+                    })
+                    .catch(error => {
+                        console.error('Error fetching patient data:', error);
+                        displayError('{{ "Error: Unable to retrieve patient data. Please try again later."|xlt }}', error);
+                    });
+                },
+                minLength: 3,
+                select: function(event, ui) {
+                    $(this).val(ui.item.value);
+                    $('input[name="selected_patient_id"]').val(ui.item.id);
+                    
+                    // Enable and configure the Load Previous Diagnoses button
+                    $('#btn-load-prev-dx')
+                        .data('pid', ui.item.id)
+                        .data('patient-name', ui.item.value)
+                        .show();
+                    
+                    return false;
+                }
+            });
+
+            // Provider search autocomplete
+            $('input[name="searchprovider"]').autocomplete({
+                source: function (request, response) {
+                    let url = WEBROOT + '/interface/modules/custom_modules/oe-module-hospital-charge/public/index.php/searchProvider/' + encodeURIComponent(request.term);
+                    fetch(url, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json'
+                        }
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        let formattedData = data.map(provider => ({
+                            label: `${provider.name}`,
+                            value: provider.name,
+                            id: provider.id
+                        }));
+
+                        response(formattedData);
+                    })
+                    .catch(error => {
+                        console.error('Error fetching provider data:', error);
+                        displayError('{{ "Error: Unable to retrieve provider data. Please try again later."|xlt }}', error);
+                    });
+                },
+                minLength: 3,
+                select: function (event, ui) {
+                    $(this).val(ui.item.value);
+                    $('input[name="selected_provider_id"]').val(ui.item.id);
+                    return false;
+                }
+            });
+
+            // Supervisor search autocomplete
+            $('input[name="searchsupervisor"]').autocomplete({
+                source: function (request, response) {
+                    let url = WEBROOT + '/interface/modules/custom_modules/oe-module-hospital-charge/public/index.php/searchProvider/' + encodeURIComponent(request.term);
+                    fetch(url, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json'
+                        }
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        let formattedData = data.map(provider => ({
+                            label: `${provider.name}`,
+                            value: provider.name,
+                            id: provider.id
+                        }));
+
+                        response(formattedData);
+                    })
+                    .catch(error => {
+                        console.error('Error fetching provider data:', error);
+                        displayError('{{ "Error: Unable to retrieve supervisor data. Please try again later."|xlt }}', error);
+                    });
+                },
+                minLength: 3,
+                select: function (event, ui) {
+                    $(this).val(ui.item.value);
+                    $('input[name="selected_supervisor_id"]').val(ui.item.id);
+                    return false;
+                }
+            });
+
+            // ========== Load Previous Diagnoses Feature ==========
+            
+            // Click handler for Load Previous Diagnoses button
+            $('#btn-load-prev-dx').on('click', function() {
+                const pid = $(this).data('pid');
+                const patientName = $(this).data('patient-name');
+                
+                if (!pid) {
+                    displayError('{{ "Error: No patient selected."|xlt }}', new Error('Missing PID'));
+                    return;
+                }
+                
+                // Update modal title with patient name
+                $('#modal-prev-dx-title').text('{{ "Select Previous Diagnoses for"|xlt }} ' + patientName);
+                
+                // Reset modal state
+                $('#prev-dx-list').html('<div class="text-center"><div class="spinner-border" role="status"><span class="sr-only">{{ "Loading..."|xlt }}</span></div></div>');
+                $('#prev-dx-empty').hide();
+                $('#btn-prev-dx-apply').prop('disabled', true);
+                $('#prev-dx-subtitle').html('{{ "Select up to 4 diagnosis codes from the last 6 months"|xlt }} <span id="prev-dx-counter" class="badge badge-secondary">0/4</span>');
+                
+                // Show modal
+                $('#modal-prev-dx').modal('show');
+                
+                // Fetch diagnoses via AJAX
+                const url = `${WEBROOT}/interface/modules/custom_modules/oe-module-hospital-charge/public/index.php/searchPatientDiagnoses/${pid}`;
+                
+                fetch(url, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                })
+                .then(res => res.json())
+                .then(data => {
+                    // Clear loading spinner
+                    $('#prev-dx-list').empty();
+                    
+                    // Check if data is empty or error
+                    if (!Array.isArray(data) || data.length === 0) {
+                        $('#prev-dx-empty').show();
+                        return;
+                    }
+                    
+                    // Render checkboxes
+                    data.forEach((item, index) => {
+                        const checkboxId = `prev-dx-check-${index}`;
+                        const description = item.description || '{{ "No description"|xlt }}';
+                        const checkboxHtml = `
+                            <div class="form-check mb-2">
+                                <input class="form-check-input prev-dx-check" type="checkbox" value="${item.code}" id="${checkboxId}" data-description="${description}">
+                                <label class="form-check-label" for="${checkboxId}">
+                                    <strong>${item.code}</strong> &mdash; ${description}
+                                </label>
+                            </div>`;
+                        $('#prev-dx-list').append(checkboxHtml);
+                    });
+                    
+                    // Update counter
+                    updateDxCounter();
+                })
+                .catch(error => {
+                    console.error('Error fetching previous diagnoses:', error);
+                    $('#prev-dx-list').html('<div class="alert alert-danger">{{ "Failed to load previous diagnoses. Please try again."|xlt }}</div>');
+                });
+            });
+            
+            // Function to update diagnosis counter
+            function updateDxCounter() {
+                const selectedCount = $('.prev-dx-check:checked').length;
+                $('#prev-dx-counter').text(`${selectedCount}/4`);
+            }
+            
+            // Handle checkbox selection changes with max 4 enforcement
+            $(document).on('change', '.prev-dx-check', function() {
+                const selectedCount = $('.prev-dx-check:checked').length;
+                
+                // Update counter
+                updateDxCounter();
+                
+                // Enable/disable "Load Selected" button
+                $('#btn-prev-dx-apply').prop('disabled', selectedCount === 0);
+                
+                // Enforce max 4 selections
+                if (selectedCount >= 4) {
+                    // Disable unchecked checkboxes
+                    $('.prev-dx-check:not(:checked)').prop('disabled', true);
+                } else {
+                    // Re-enable all checkboxes
+                    $('.prev-dx-check').prop('disabled', false);
+                }
+            });
+            
+            // Apply selected diagnoses to form
+            $('#btn-prev-dx-apply').on('click', function() {
+                const selectedItems = [];
+                
+                // Collect selected items (up to 4)
+                $('.prev-dx-check:checked').each(function() {
+                    selectedItems.push({
+                        code: $(this).val().trim(),
+                        description: $(this).data('description')
+                    });
+                });
+                
+                if (selectedItems.length === 0) {
+                    return;
+                }
+                
+                // Check if diagnosis fields already have values
+                const existingDiagnoses = [];
+                $('.diagnosis-code').each(function() {
+                    const val = $(this).val().trim();
+                    if (val) {
+                        existingDiagnoses.push(val);
+                    }
+                });
+                
+                let shouldReplace = true;
+                if (existingDiagnoses.length > 0) {
+                    // Confirm with user
+                    shouldReplace = confirm('{{ "You have existing diagnosis codes. Do you want to REPLACE them with the selected codes? Click OK to replace, Cancel to keep existing and add new ones (up to 4 total)."|xlt }}');
+                }
+                
+                // Clear existing if replacing
+                if (shouldReplace && existingDiagnoses.length > 0) {
+                    $('.diagnosis-code').each(function() {
+                        const $row = $(this).closest('tr');
+                        $(this).val('');
+                        $(this).removeAttr('data-description');
+                        $(this).removeAttr('data-previous-icd10');
+                        $row.find('.diagnosis-description').remove();
+                    });
+                    
+                    // Remove all diagnosis rows except the first one
+                    $('#diagnosisList tr:gt(0)').remove();
+                }
+                
+                // Count current diagnosis fields
+                let currentFieldCount = $('#diagnosisList tr').length;
+                
+                // Add selected diagnoses
+                selectedItems.forEach((item, index) => {
+                    // Stop if we've reached 4 total diagnoses
+                    if (shouldReplace) {
+                        if (index >= 4) return;
+                    } else {
+                        if (currentFieldCount + index >= 4) return;
+                    }
+                    
+                    // Ensure we have enough diagnosis fields
+                    if (shouldReplace) {
+                        if (index > 0 && index >= $('#diagnosisList tr').length) {
+                            addDiagnosisField();
+                        }
+                    } else {
+                        if ($('#diagnosisList tr').length < 4) {
+                            addDiagnosisField();
+                        }
+                    }
+                    
+                    // Get the appropriate diagnosis field
+                    let $targetField;
+                    if (shouldReplace) {
+                        $targetField = $('#diagnosisList tr').eq(index).find('.diagnosis-code');
+                    } else {
+                        // Find first empty field or add new one
+                        $targetField = $('.diagnosis-code').filter(function() {
+                            return $(this).val().trim() === '';
+                        }).first();
+                    }
+                    
+                    if ($targetField.length) {
+                        const $row = $targetField.closest('tr');
+                        
+                        // Set the code value
+                        $targetField.val(item.code);
+                        
+                        // Set data attributes
+                        $targetField.attr('data-description', item.description);
+                        $targetField.attr('data-previous-icd10', item.code);
+                        
+                        // Remove any existing description
+                        $row.find('.diagnosis-description').remove();
+                        
+                        // Add description display
+                        if (item.description && item.description !== '{{ "No description"|xlt }}') {
+                            const $cell = $targetField.parent();
+                            $cell.append(`<div class="diagnosis-description">${item.description}</div>`);
+                        }
+                        
+                        // Update hidden description field
+                        $targetField.siblings('.diagnosis-description-input').val(item.description);
+                    }
+                });
+                
+                // Rebuild diagnosis codes for justification
+                rebuildDiagnosisCodes();
+                
+                // Update button states
+                updateDiagnosisBtnState();
+                
+                // Close modal
+                $('#modal-prev-dx').modal('hide');
+            });
+        })(jQuery);
+    </script>
+{% endblock %}

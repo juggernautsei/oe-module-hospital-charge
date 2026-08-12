@@ -1,0 +1,113 @@
+{% extends 'base.twig' %}
+{% block head %}
+    {{ parent() }}
+    {{ setupHeader(['knockout']) }}
+    <link rel="stylesheet" href="{{ webroot }}/interface/forms/fee_sheet/review/views/review.css">
+    <script>
+        window.initialData = {
+            encounters: {{ encounters|json_encode|raw }},
+            procedures: {{ procedures|json_encode|raw }},
+            issues: {{ issues|json_encode|raw }},
+            patient: {{ patient|json_encode|raw }}
+        };
+        window.webroot = '{{ webroot }}';
+
+        // Debug logging
+        console.log('Initial encounters data:', window.initialData.encounters);
+        console.log('Initial patient data:', window.initialData.patient);
+    </script>
+{% endblock %}
+{% block content %}
+    <script type="text/html" id="procedure-select">
+        <span data-bind="text:code"></span>
+        <span data-bind="text:description"></span>
+    </script>
+    {# Charge Review Template - Converted from review.php #}
+    <div data-bind="visible: $data.show">
+        <div data-bind="visible: encounters().length==0">{{ 'No prior encounters with billing.'|xlt }}</div>
+        <select data-bind="options: $data.encounters, optionsText: 'date', value: $data.selectedEncounter, event: {change: chooseEncounter}, visible: $data.encounters().length>0"></select>
+        <div data-bind="visible: procedures().length==0">{{ 'No procedures in this encounter.'|xlt }}</div>
+        <table data-bind="visible: $data.procedures().length>0">
+            <thead>
+            <tr>
+                <th colspan='2' class='first_column'>{{ 'Procedures'|xlt }}</th>
+                <th class="price">{{ 'Price'|xlt }}</th>
+                <th class="modifiers">{{ 'Modifiers'|xlt }}</th>
+                <th class="units">{{ 'Units'|xlt }}</th>
+                <th class="justify">{{ 'Justify'|xlt }}</th>
+            </tr>
+            </thead>
+            <tbody data-bind="foreach: $data.procedures">
+            <tr>
+                <td><input type="checkbox" data-bind="checked: selected"/></td>
+                <td data-bind="template: {name: 'procedure-select', data: $data}"></td>
+                <td><input class="price form-control" type="text" data-bind="value:fee" /></td>
+                <td><input type="text" data-bind="value:modifiers,attr: {size: mod_size}"/></td>
+                <td><input class="units form-control" type="text" data-bind="value:units"/></td>
+                <td data-bind="text: justify"></td>
+            </tr>
+            </tbody>
+        </table>
+        <div data-bind="visible: issues().length==0">{{ 'No issues in this encounter.'|xlt }}</div>
+        <table data-bind="visible: $data.issues().length>0">
+            <thead>
+            <tr><th colspan='3' class='first_column'>{{ 'Issues'|xlt }}</th></tr>
+            </thead>
+            <tbody data-bind="foreach: $data.issues">
+            <tr>
+                <td><input type="checkbox" data-bind="checked: selected"/></td>
+                <td data-bind="text:code"></td>
+                <td data-bind="text: description"></td>
+            </tr>
+            </tbody>
+        </table>
+        <div class="d-flex justify-content-start mt-3">
+            <input type="button" class="btn btn-primary btn-sm mr-2" data-bind="click: add_review" value="{{ 'Add'|xla }}" style="min-width: 80px;" />
+            <input type="button" class="cancel_dialog btn btn-secondary btn-sm" data-bind="click: cancel_review" value="{{ 'Cancel'|xla }}" style="min-width: 80px; border: 1px solid #6c757d;" />
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    {{ parent() }}
+    <script src="{{ webroot }}/interface/modules/custom_modules/oe-module-hospital-charge/public/js/charge-review/review.js?v={{ "now"|date("U") }}"></script>
+    <script>
+        // Wait for DOM ready and a small delay to ensure scripts are loaded
+        $(document).ready(function() {
+            // Add a small delay to ensure the review.js has fully executed
+            setTimeout(function() {
+                try {
+                    // More comprehensive check for viewmodel initialization
+                    if (!window.hospitalChargeViewModel) {
+                        console.error('Viewmodel initialization failed: hospitalChargeViewModel is undefined');
+                        // Try to initialize it manually as a fallback
+                        if (typeof HospitalCharge !== 'undefined' && typeof HospitalCharge.ReviewViewModel !== 'undefined') {
+                            console.log('Attempting manual initialization of viewmodel');
+                            window.hospitalChargeViewModel = new HospitalCharge.ReviewViewModel(window.initialData || {});
+                            
+                            // Find the container and apply bindings
+                            const container = document.querySelector('[data-bind*="visible: $data.show"]');
+                            if (container) {
+                                ko.applyBindings(window.hospitalChargeViewModel, container);
+                                console.log('Manual initialization successful');
+                            }
+                        }
+                    } else if (typeof window.hospitalChargeViewModel.show !== 'function') {
+                        console.error('Viewmodel initialization failed: hospitalChargeViewModel is missing required properties');
+                    } else {
+                        console.log('Viewmodel initialization successful');
+                        console.log('Viewmodel state:', {
+                            show: window.hospitalChargeViewModel.show(),
+                            procedures: window.hospitalChargeViewModel.procedures().length,
+                            issues: window.hospitalChargeViewModel.issues().length,
+                            encounters: window.hospitalChargeViewModel.encounters().length
+                        });
+                    }
+                    console.log('Review.js loaded successfully');
+                } catch (e) {
+                    console.error('Initialization error:', e);
+                }
+            }, 100); // Small delay to ensure scripts are loaded
+        });
+    </script>
+{% endblock %}

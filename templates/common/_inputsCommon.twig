@@ -1,0 +1,38 @@
+<div class="row m-2">
+
+    <div class="col-md-6">
+        <input type="hidden" name="selected_patient_id" value="">
+        <input type="hidden" name="selected_provider_id" value="">
+        <input type="hidden" name="selected_supervisor_id" value="">
+    </div>
+</div>
+<div class="row m-2">
+    <div class="col-md">
+        <div class="d-flex">
+            <input type="text" name="searchpatient" value="" class="form-control" placeholder="{{ "Search for Patient mm-dd-yyyy" | xlt }}">
+            <button type="button" id="btn-load-prev-dx" class="btn btn-secondary btn-sm ml-2" style="display:none; white-space: nowrap;" aria-label="{{ 'Load previous diagnosis codes for this patient'|xlt }}">{{ 'Load Previous Diagnoses'|xlt }}</button>
+        </div>
+    </div>
+    <div class="col-md">
+        <input type="text" name="searchprovider" value="{{ hospital_data.provider_name|default('') }}" class="form-control" placeholder="{{ "Search for Rendering Provider" | xlt }}">
+    </div>
+    <div class="col-md">
+        <input type="text" name="searchsupervisor" value="" class="form-control" placeholder="{{ "Search for Supervisor" | xlt }}">
+    </div>
+    <div class="col-md">
+        <select name="facility" class="form-control">
+            <option value="">{{ 'Select a Facility' | xlt }}</option>
+            {% for facility in facilities %}
+                <option value="{{ facility.id }}" {% if current_page is defined and current_page == 'hospital' and facility.id == '39' %}selected{% endif %}>{{ facility.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md">
+        <select name="billing_facility" class="form-control">
+            <option value="">{{ 'Select a Billing Facility' | xlt }}</option>
+            {% for business in businesses %}
+                <option value="{{ business.id }}">{{ business.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+</div>

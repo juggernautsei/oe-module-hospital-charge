@@ -1,0 +1,27 @@
+{
+    "name": "juggernautsei/oe-module-hospital-charge",
+    "description": "OpenEMR hospital/rapid charge entry with CPT, ICD-10, modifiers, and encounter billing",
+    "type": "openemr-module",
+    "license": "GPL-3.0-only",
+    "authors": [
+        {
+            "name": "Sherwin Gaddis",
+            "email": "sherwingaddis@gmail.com"
+        }
+    ],
+    "keywords": [
+        "openemr",
+        "openemr-module",
+        "billing",
+        "hospital",
+        "charges"
+    ],
+    "require": {
+        "php": ">=8.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "Juggernaut\\Module\\HospitalCharge\\": "src/"
+        }
+    }
+}
