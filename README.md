@@ -1,7 +1,10 @@
 # OpenEMR Hospital Charge Module
 
 Rapid hospital/office charge entry for OpenEMR: patient search, CPT/HCPCS and ICD-10 lines, modifiers, diagnosis justification, encounter creation, and a charge-review modal.
+
 <img width="1905" height="720" alt="image" src="https://github.com/user-attachments/assets/aa56737e-14ed-493a-945e-8873ea6b019b" />
+
+
 <img width="1905" height="778" alt="image" src="https://github.com/user-attachments/assets/d75cd44d-9e34-4317-a740-da59595eda40" />
 
 
